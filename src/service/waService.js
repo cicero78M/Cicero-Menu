@@ -60,7 +60,6 @@ import { getShortcodesTodayByClient } from "../model/instaPostModel.js";
 import { getUsersByClient } from "../model/userModel.js";
 
 // Handler Imports
-import { userMenuHandlers } from "../handler/menu/userMenuHandlers.js";
 import {
   BULK_STATUS_HEADER_REGEX,
   clientRequestHandlers,
@@ -75,18 +74,6 @@ import { handleFetchKomentarTiktokBatch } from "../handler/fetchengagement/fetch
 
 // >>> HANYA SATU INI <<< (Pastikan di helper semua diekspor)
 import {
-  userMenuContext,
-  updateUsernameSession,
-  userRequestLinkSessions,
-  knownUserSet,
-  setMenuTimeout,
-  waBindSessions,
-  setBindTimeout,
-  operatorOptionSessions,
-  setOperatorOptionTimeout,
-  adminOptionSessions,
-  setAdminOptionTimeout,
-  setUserRequestLinkTimeout,
   setSession,
   getSession,
   clearSession,
@@ -532,12 +519,8 @@ function formatVerificationSummary(
 
 const DEFAULT_AUTH_DATA_PARENT_DIR = ".cicero";
 const DEFAULT_AUTH_DATA_DIR = "wwebjs_auth";
-const defaultUserClientId = "wa-userrequest";
 const defaultGatewayClientId = "wa-gateway";
-const rawUserClientId = String(env.USER_WA_CLIENT_ID || "");
 const rawGatewayClientId = String(env.GATEWAY_WA_CLIENT_ID || "");
-const normalizedUserClientId = rawUserClientId.trim();
-const normalizedUserClientIdLower = normalizedUserClientId.toLowerCase();
 const trimmedGatewayClientId = rawGatewayClientId.trim();
 const normalizedGatewayClientId = trimmedGatewayClientId.toLowerCase();
 const resolvedGatewayClientId = normalizedGatewayClientId || undefined;
@@ -587,49 +570,6 @@ const throwClientIdError = (message) => {
   throw new Error(`[WA] ${message}`);
 };
 
-const ensureUserClientIdConsistency = () => {
-  const authDataPath = resolveAuthDataPath();
-  if (!normalizedUserClientIdLower) {
-    throwClientIdError(
-      "USER_WA_CLIENT_ID kosong; set nilai unik lowercase (contoh: wa-userrequest-prod)."
-    );
-  }
-  if (
-    normalizedUserClientId &&
-    normalizedUserClientIdLower &&
-    normalizedUserClientId !== normalizedUserClientIdLower
-  ) {
-    const sessionPath = findSessionCaseMismatch(
-      authDataPath,
-      normalizedUserClientIdLower
-    );
-    const sessionHint = sessionPath
-      ? ` Ditemukan session berbeda di ${sessionPath}.`
-      : "";
-    throwClientIdError(
-      `USER_WA_CLIENT_ID harus lowercase. Nilai "${normalizedUserClientId}" tidak konsisten.${sessionHint} ` +
-        "Perbarui env/folder session agar cocok sebelum menjalankan proses."
-    );
-  }
-  if (normalizedUserClientIdLower === defaultUserClientId) {
-    throwClientIdError(
-      `USER_WA_CLIENT_ID masih default (${defaultUserClientId}); clientId harus unik dan lowercase. ` +
-        `Perbarui env dan bersihkan session lama di ${authDataPath}.`
-    );
-  }
-  const mismatchedSessionPath = findSessionCaseMismatch(
-    authDataPath,
-    normalizedUserClientIdLower
-  );
-  if (mismatchedSessionPath) {
-    throwClientIdError(
-      `Folder session "${path.basename(mismatchedSessionPath)}" tidak konsisten dengan ` +
-        `USER_WA_CLIENT_ID="${normalizedUserClientIdLower}". Rename atau hapus session lama di ` +
-        `${mismatchedSessionPath} agar konsisten.`
-    );
-  }
-};
-
 const ensureGatewayClientIdConsistency = () => {
   const authDataPath = resolveAuthDataPath();
   if (
@@ -668,54 +608,23 @@ const ensureGatewayClientIdConsistency = () => {
   }
 };
 
-const ensureClientIdUniqueness = () => {
-  if (normalizedUserClientIdLower === normalizedGatewayClientId) {
-    throwClientIdError(
-      `USER_WA_CLIENT_ID dan GATEWAY_WA_CLIENT_ID sama (${normalizedGatewayClientId}); ` +
-        "clientId harus unik. Perbarui env sebelum menjalankan proses."
-    );
-  }
-};
-
-ensureUserClientIdConsistency();
 ensureGatewayClientIdConsistency();
-ensureClientIdUniqueness();
 
 // Initialize WhatsApp client via Baileys
 export let waClient = await createBaileysClient();
-export let waUserClient = await createBaileysClient(env.USER_WA_CLIENT_ID);
 export let waGatewayClient = await createBaileysClient(resolvedGatewayClientId);
 
 const logClientIdIssue = (envVar, issueMessage) => {
   console.error(`[WA] ${envVar} ${issueMessage}; clientId harus unik.`);
 };
 
-if (!normalizedUserClientId) {
-  logClientIdIssue("USER_WA_CLIENT_ID", "kosong");
-}
 if (!normalizedGatewayClientId) {
   logClientIdIssue("GATEWAY_WA_CLIENT_ID", "kosong");
-}
-if (normalizedUserClientId === defaultUserClientId) {
-  logClientIdIssue(
-    "USER_WA_CLIENT_ID",
-    `masih default (${defaultUserClientId})`
-  );
 }
 if (normalizedGatewayClientId === defaultGatewayClientId) {
   logClientIdIssue(
     "GATEWAY_WA_CLIENT_ID",
     `masih default (${defaultGatewayClientId})`
-  );
-}
-if (
-  normalizedUserClientId &&
-  normalizedGatewayClientId &&
-  normalizedUserClientId === normalizedGatewayClientId
-) {
-  console.error(
-    `[WA] USER_WA_CLIENT_ID dan GATEWAY_WA_CLIENT_ID sama (${normalizedUserClientId}); ` +
-      "clientId harus unik."
   );
 }
 
@@ -1025,7 +934,6 @@ function snapshotReadinessState({ readinessState, client, observedState = null }
 function getWaReadinessSummarySync() {
   const clientEntries = [
     { key: "wa", client: waClient, label: "WA" },
-    { key: "waUser", client: waUserClient, label: "WA-USER" },
     { key: "waGateway", client: waGatewayClient, label: "WA-GATEWAY" },
   ];
 
@@ -1045,7 +953,6 @@ export async function getWaReadinessSummary() {
   const summary = getWaReadinessSummarySync();
   const clientEntries = [
     { key: "wa", client: waClient },
-    { key: "waUser", client: waUserClient },
     { key: "waGateway", client: waGatewayClient },
   ];
 
@@ -1114,7 +1021,6 @@ function startReadinessDiagnosticsLogger() {
 }
 
 registerClientReadiness(waClient, "WA");
-registerClientReadiness(waUserClient, "WA-USER");
 registerClientReadiness(waGatewayClient, "WA-GATEWAY");
 waGatewayClient.readyTimeoutMs = gatewayReadyTimeoutMs;
 
@@ -1243,7 +1149,6 @@ export function waitForWaReady(timeoutMs) {
 
 // Expose readiness helper for consumers like safeSendMessage
 waClient.waitForWaReady = () => waitForClientReady(waClient);
-waUserClient.waitForWaReady = () => waitForClientReady(waUserClient);
 waGatewayClient.waitForWaReady = () => waitForClientReady(waGatewayClient);
 
 // Pastikan semua pengiriman pesan menunggu hingga client siap
@@ -1338,7 +1243,6 @@ function wrapSendMessage(client) {
   };
 }
 wrapSendMessage(waClient);
-wrapSendMessage(waUserClient);
 wrapSendMessage(waGatewayClient);
 
 /**
@@ -1346,7 +1250,7 @@ wrapSendMessage(waGatewayClient);
  * This ensures all messages have been sent before the caller continues
  */
 export async function waitForAllMessageQueues() {
-  const clients = [waClient, waUserClient, waGatewayClient];
+  const clients = [waClient, waGatewayClient];
   const idlePromises = [];
   
   for (const client of clients) {
@@ -1365,7 +1269,6 @@ export function sendGatewayMessage(jid, text) {
   const waFallbackClients = [
     { client: waGatewayClient, label: "WA-GATEWAY" },
     { client: waClient, label: "WA" },
-    { client: waUserClient, label: "WA-USER" },
   ];
   return sendWithClientFallback({
     chatId: jid,
@@ -1435,76 +1338,6 @@ waClient.on("change_state", (state) => {
     buildWaStructuredLog({
       clientId: waClient?.clientId || null,
       label: "WA",
-      event: "change_state_unknown",
-      errorCode: normalizedState || "UNKNOWN_STATE",
-    })
-  );
-});
-
-waUserClient.on("qr", (qr) => {
-  const state = getClientReadinessState(waUserClient, "WA-USER");
-  state.lastQrAt = Date.now();
-  state.lastQrPayloadSeen = qr;
-  state.awaitingQrScan = true;
-  qrcode.generate(qr, { small: true });
-  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waUserClient?.clientId || null, label: "WA-USER", event: "qr" }), { debugOnly: true });
-});
-
-waUserClient.on("authenticated", (session) => {
-  const sessionInfo = session ? "session received" : "no session payload";
-  writeWaStructuredLog("debug", buildWaStructuredLog({ clientId: waUserClient?.clientId || null, label: "WA-USER", event: "authenticated", errorCode: sessionInfo }), { debugOnly: true });
-  clearLogoutAwaitingQr(waUserClient);
-});
-
-waUserClient.on("auth_failure", (message) => {
-  runSingleLifecycleTransition(
-    waUserClient,
-    "WA-USER",
-    "auth_failure",
-    message,
-    () => {
-      setClientNotReady(waUserClient);
-      const state = getClientReadinessState(waUserClient, "WA-USER");
-      state.lastAuthFailureAt = Date.now();
-      state.lastAuthFailureMessage = message || null;
-      writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waUserClient?.clientId || null, label: "WA-USER", event: "auth_failure", errorCode: "AUTH_FAILURE", errorMessage: message || null }));
-    }
-  );
-});
-
-waUserClient.on("disconnected", (reason) => {
-  runSingleLifecycleTransition(
-    waUserClient,
-    "WA-USER",
-    "disconnected",
-    reason,
-    () => {
-      const normalizedReason = normalizeDisconnectReason(reason);
-      const state = getClientReadinessState(waUserClient, "WA-USER");
-      state.lastDisconnectReason = normalizedReason || null;
-      state.awaitingQrScan = isLogoutDisconnectReason(normalizedReason);
-      setClientNotReady(waUserClient);
-      writeWaStructuredLog("warn", buildWaStructuredLog({ clientId: waUserClient?.clientId || null, label: "WA-USER", event: "disconnected", errorCode: normalizedReason || null }));
-    }
-  );
-});
-
-waUserClient.on("ready", () => {
-  clearLogoutAwaitingQr(waUserClient);
-  markClientReady(waUserClient, "ready");
-});
-
-waUserClient.on("change_state", (state) => {
-  const normalizedState = String(state || "").toLowerCase();
-  if (normalizedState === "connected" || normalizedState === "open") {
-    markClientReady(waUserClient, `change_state_${normalizedState}`);
-    return;
-  }
-  writeRateLimitedWaWarn(
-    `unknown-state:WA-USER:${normalizedState || 'empty'}`,
-    buildWaStructuredLog({
-      clientId: waUserClient?.clientId || null,
-      label: "WA-USER",
       event: "change_state_unknown",
       errorCode: normalizedState || "UNKNOWN_STATE",
     })
@@ -4206,10 +4039,6 @@ const handleMessage = createHandleMessage(waClient, {
   allowUserMenu: false,
   clientLabel: "[WA]",
 });
-const handleUserMessage = createHandleMessage(waUserClient, {
-  allowUserMenu: true,
-  clientLabel: "[WA-USER]",
-});
 
 async function processGatewayBulkDeletion(chatId, text) {
   const existingSession = getSession(chatId);
@@ -4480,7 +4309,6 @@ export async function handleGatewayMessage(msg) {
 }
 
 registerClientMessageHandler(waClient, "wwebjs", handleMessage);
-registerClientMessageHandler(waUserClient, "wwebjs-user", handleUserMessage);
 registerClientMessageHandler(waGatewayClient, "wwebjs-gateway", handleGatewayMessage);
 
 if (shouldInitWhatsAppClients) {
@@ -4500,36 +4328,6 @@ if (shouldInitWhatsAppClients) {
       { debugOnly: true }
     );
     handleIncoming('baileys', msg, handleMessage);
-  });
-
-  waUserClient.on('message', (msg) => {
-    const from = msg.from || '';
-    if (from.endsWith('@g.us') || from === 'status@broadcast') {
-      writeWaStructuredLog(
-        "debug",
-        buildWaStructuredLog({
-          clientId: waUserClient?.clientId || null,
-          label: "WA-USER",
-          event: "message_ignored",
-          jid: from || null,
-          errorCode: "GROUP_OR_STATUS",
-        }),
-        { debugOnly: true }
-      );
-      return;
-    }
-    writeWaStructuredLog(
-      "debug",
-      buildWaStructuredLog({
-        clientId: waUserClient?.clientId || null,
-        label: "WA-USER",
-        event: "message_received",
-        jid: msg?.from || null,
-        messageId: msg?.id?._serialized || msg?.id?.id || null,
-      }),
-      { debugOnly: true }
-    );
-    handleIncoming('baileys-user', msg, handleUserMessage);
   });
 
   waGatewayClient.on('message', (msg) => {
@@ -4554,7 +4352,6 @@ if (shouldInitWhatsAppClients) {
       label: "WA",
       event: "wa_message_listener_count",
       waClientCount: waClient.listenerCount('message'),
-      waUserClientCount: waUserClient.listenerCount('message'),
       waGatewayClientCount: waGatewayClient.listenerCount('message'),
     }),
     { debugOnly: true }
@@ -4563,7 +4360,6 @@ if (shouldInitWhatsAppClients) {
 
   const clientsToInit = [
     { label: "WA", client: waClient },
-    { label: "WA-USER", client: waUserClient },
     { label: "WA-GATEWAY", client: waGatewayClient },
   ];
 
@@ -4603,11 +4399,10 @@ if (shouldInitWhatsAppClients) {
   // Diagnostic checks to ensure message listeners are attached
   logWaServiceDiagnostics(
     waClient,
-    waUserClient,
     waGatewayClient,
     getWaReadinessSummarySync()
   );
-  checkMessageListenersAttached(waClient, waUserClient, waGatewayClient);
+  checkMessageListenersAttached(waClient, waGatewayClient);
 }
 
 export default waClient;
