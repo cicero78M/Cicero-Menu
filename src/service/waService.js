@@ -1542,7 +1542,6 @@ export function createHandleMessage(waClient, options = {}) {
     if (isGroupChat) {
       const handledGroupComplaint = await handleComplaintMessageIfApplicable({
         text,
-        allowUserMenu,
         session,
         isAdmin,
         initialIsMyContact,
@@ -2064,7 +2063,6 @@ Ketik *angka menu* di atas, atau *batal* untuk keluar.
 
   const handledComplaint = await handleComplaintMessageIfApplicable({
     text,
-    allowUserMenu,
     session,
     isAdmin,
     initialIsMyContact,
@@ -2100,56 +2098,6 @@ Ketik *angka menu* di atas, atau *batal* untuk keluar.
     handleFetchKomentarTiktokBatch,
   });
   if (handledClientRequestSession) return;
-
-
-    // ===== Handler Menu User Interaktif Step Lanjut =====
-    if (userMenuContext[chatId]) {
-      if (!allowUserMenu) {
-        delete userMenuContext[chatId];
-        return;
-      }
-      setMenuTimeout(chatId, waClient);
-      const session = userMenuContext[chatId];
-      const handler = userMenuHandlers[session.step];
-      if (handler) {
-        await handler(session, chatId, text, waClient, pool, userModel);
-        if (session.exit) {
-          clearTimeout(session.timeout);
-          clearTimeout(session.warningTimeout);
-          clearTimeout(session.noReplyTimeout);
-          delete userMenuContext[chatId];
-        } else {
-          const expectReply = shouldExpectQuickReply(session);
-          setMenuTimeout(chatId, waClient, expectReply);
-        }
-      } else {
-        await waClient.sendMessage(
-          chatId,
-          "⚠️ Sesi menu user tidak dikenal, silakan ketik *userrequest* ulang atau *batal*."
-        );
-        clearTimeout(session.timeout);
-        clearTimeout(session.warningTimeout);
-        clearTimeout(session.noReplyTimeout);
-        delete userMenuContext[chatId];
-      }
-      return;
-    }
-
-    // ========== Mulai Menu Interaktif User ==========
-    if (lowerText === "userrequest") {
-      if (!allowUserMenu) {
-        return;
-      }
-      await startUserMenuSession();
-      return;
-    }
-
-    if (allowUserMenu && !userMenuContext[chatId]) {
-      const started = await startUserMenuSession();
-      if (started) {
-        return;
-      }
-    }
 
   // ===== Handler Menu Client =====
   if (text.toLowerCase() === "clientrequest") {
@@ -2263,141 +2211,6 @@ Ketik *angka menu* di atas, atau *batal* untuk keluar.
         ? "✅ Notifikasi WhatsApp untuk likes/komentar Instagram diaktifkan."
         : "🚫 Notifikasi WhatsApp untuk likes/komentar Instagram dimatikan."
     );
-    return;
-  }
-
-  // ========== Update Username via Link Profile IG/TikTok ==========
-  if (
-    !text.includes("#") &&
-    (IG_PROFILE_REGEX.test(text.trim()) || TT_PROFILE_REGEX.test(text.trim()))
-  ) {
-    if (await handleProfileLinkForUserRequest()) {
-      return;
-    }
-    updateUsernameSession[chatId] = {
-      link: text.trim(),
-      step: "confirm",
-    };
-    await waClient.sendMessage(
-      chatId,
-      `Apakah Anda ingin mengupdate username akun Anda sesuai link ini?\n*${text.trim()}*\n\nBalas *ya* untuk melanjutkan atau *tidak* untuk membatalkan.`
-    );
-    return;
-  }
-
-  // ========== Proses Konfirmasi Update Username ==========
-  if (
-    updateUsernameSession[chatId] &&
-    updateUsernameSession[chatId].step === "confirm"
-  ) {
-    const jawaban = text.trim().toLowerCase();
-    if (["tidak", "batal", "no", "cancel"].includes(jawaban)) {
-      delete updateUsernameSession[chatId];
-      await waClient.sendMessage(chatId, "Update username dibatalkan.");
-      return;
-    }
-    if (jawaban !== "ya") {
-      await waClient.sendMessage(
-        chatId,
-        "Balas *ya* untuk melanjutkan update username atau *tidak* untuk membatalkan."
-      );
-      return;
-    }
-    // Ekstrak username
-    let username = null;
-    let field = null;
-    let match = null;
-    if ((match = updateUsernameSession[chatId].link.match(IG_PROFILE_REGEX))) {
-      username = match[2].toLowerCase();
-      field = "insta";
-    } else if (
-      (match = updateUsernameSession[chatId].link.match(TT_PROFILE_REGEX))
-    ) {
-      username = "@" + match[2].replace(/^@+/, "").toLowerCase();
-      field = "tiktok";
-    }
-    if (!username || !field) {
-      await waClient.sendMessage(
-        chatId,
-        "Link tidak valid atau sistem gagal membaca username."
-      );
-      delete updateUsernameSession[chatId];
-      return;
-    }
-    let waNum = chatId.replace(/[^0-9]/g, "");
-    let user = await userModel.findUserByWhatsApp(waNum);
-    if (user) {
-      await userModel.updateUserField(user.user_id, field, username);
-      await waClient.sendMessage(
-        chatId,
-        `✅ Username *${
-          field === "insta" ? "Instagram" : "TikTok"
-        }* berhasil diupdate menjadi *${username}* untuk user NRP/NIP *${
-          user.user_id
-        }*.`
-      );
-      delete updateUsernameSession[chatId];
-      return;
-    } else {
-      updateUsernameSession[chatId].step = "ask_nrp";
-      updateUsernameSession[chatId].username = username;
-      updateUsernameSession[chatId].field = field;
-      await waClient.sendMessage(
-        chatId,
-        "Nomor WhatsApp Anda belum terhubung ke data user mana pun.\nSilakan masukkan NRP Anda untuk melakukan binding akun atau balas *batal* untuk keluar:"
-      );
-      return;
-    }
-  }
-
-  // ========== Proses Binding NRP/NIP ==========
-  if (
-    updateUsernameSession[chatId] &&
-    updateUsernameSession[chatId].step === "ask_nrp"
-  ) {
-    const nrp = text.replace(/[^0-9a-zA-Z]/g, "");
-    if (!nrp) {
-      await waClient.sendMessage(
-        chatId,
-        "NRP yang Anda masukkan tidak valid. Coba lagi atau balas *batal* untuk membatalkan."
-      );
-      return;
-    }
-    const user = await userModel.findUserById(nrp);
-    if (!user) {
-      await waClient.sendMessage(
-        chatId,
-        `❌ NRP *${nrp}* tidak ditemukan. Jika yakin benar, hubungi Opr Humas Polres Anda.`
-      );
-      return;
-    }
-    let waNum = chatId.replace(/[^0-9]/g, "");
-    let waUsed = await userModel.findUserByWhatsApp(waNum);
-    if (waUsed && waUsed.user_id !== user.user_id) {
-      await waClient.sendMessage(
-        chatId,
-        `Nomor WhatsApp ini sudah terpakai pada NRP/NIP *${waUsed.user_id}*. Hanya satu user per WA yang diizinkan.`
-      );
-      delete updateUsernameSession[chatId];
-      return;
-    }
-    await userModel.updateUserField(
-      user.user_id,
-      updateUsernameSession[chatId].field,
-      updateUsernameSession[chatId].username
-    );
-    await userModel.updateUserField(user.user_id, "whatsapp", waNum);
-    await waClient.sendMessage(
-      chatId,
-      `✅ Username *${
-        updateUsernameSession[chatId].field === "insta" ? "Instagram" : "TikTok"
-      }* berhasil diupdate menjadi *${
-        updateUsernameSession[chatId].username
-      }* dan nomor WhatsApp Anda telah di-bind ke user NRP/NIP *${
-        user.user_id
-      }*.`
-    );
-    delete updateUsernameSession[chatId];
     return;
   }
 
@@ -3562,132 +3375,29 @@ Ketik *angka menu* di atas, atau *batal* untuk keluar.
       );
       return;
     }
-    if (!allowUserMenu) {
-      return;
-    }
-    const pengirim = chatId.replace(/[^0-9]/g, "");
-    const userByWA = await userModel.findUserByWhatsApp(pengirim);
-    const salam = getGreeting();
-    if (userByWA) {
-      userMenuContext[chatId] = {
-        step: "confirmUserByWaUpdate",
-        user_id: userByWA.user_id,
-      };
-      const msg = `${salam}, Bapak/Ibu\n${formatUserSummary(userByWA)}\n\nApakah Anda ingin melakukan perubahan data?\nBalas *ya* untuk memulai update atau *tidak* untuk melewati.`;
-      await safeSendMessage(waClient, chatId, msg.trim());
-      setMenuTimeout(
-        chatId,
-        waClient,
-        shouldExpectQuickReply(userMenuContext[chatId])
-      );
-    } else {
-      userMenuContext[chatId] = { step: "inputUserId" };
-      const msg =
-        `${salam}! Nomor WhatsApp Anda belum terdaftar.` +
-        clientInfoText +
-        "\n\nUntuk menampilkan data Anda, balas dengan NRP (hanya angka)." +
-        "\nKetik *batal* untuk keluar." +
-        "\n\nContoh:\n87020990";
-      await safeSendMessage(waClient, chatId, msg.trim());
-      setMenuTimeout(
-        chatId,
-        waClient,
-        shouldExpectQuickReply(userMenuContext[chatId])
-      );
-    }
+    // User menu is no longer available
+    await safeSendMessage(
+      waClient,
+      chatId,
+      "❌ Maaf, fitur perubahan data user tidak tersedia lagi. Silakan hubungi operator untuk bantuan."
+    );
     return;
   }
 
-  // Proses binding WhatsApp jika nomor belum terdaftar
+  // User not found by WhatsApp - send message
   const senderWa = chatId.replace(/[^0-9]/g, "");
   const userByWAExist = await userModel.findUserByWhatsApp(senderWa);
 
   if (!userByWAExist) {
-    if (!allowUserMenu) {
-      delete waBindSessions[chatId];
-      return;
-    }
-    if (waBindSessions[chatId]) {
-      const session = waBindSessions[chatId];
-      if (session.step === "ask_nrp") {
-        if (text.trim().toLowerCase() === "batal") {
-          delete waBindSessions[chatId];
-          await waClient.sendMessage(chatId, "Proses dibatalkan. Silakan masukkan NRP Anda untuk memulai.");
-          waBindSessions[chatId] = { step: "ask_nrp" };
-          setBindTimeout(chatId);
-          return;
-        }
-        const lower = text.trim().toLowerCase();
-        if (lower === "userrequest") {
-          await waClient.sendMessage(
-            chatId,
-            "Panduan:\n1. Ketik NRP Anda (angka saja) untuk mendaftar." +
-              "\n2. Balas *batal* untuk membatalkan proses."
-          );
-          return;
-        }
-        const nrp = text.trim();
-        if (!/^\d+$/.test(nrp)) {
-          await waClient.sendMessage(
-            chatId,
-            "Balas pesan ini dengan NRP Anda, \n*Contoh Pesan Balasan : 87020990*"
-          );
-          return;
-        }
-        const user = await userModel.findUserById(nrp);
-        if (!user) {
-          await waClient.sendMessage(chatId, `❌ NRP *${nrp}* tidak ditemukan. Jika yakin benar, hubungi Opr Humas Polres Anda.`);
-          return;
-        }
-        session.step = "confirm";
-        session.user_id = user.user_id;
-        setBindTimeout(chatId);
-        await waClient.sendMessage(
-          chatId,
-          `Apakah Anda ingin menghubungkan nomor WhatsApp ini dengan NRP *${nrp}*?\n` +
-            "Satu username hanya bisa menggunakan satu akun WhatsApp.\n" +
-            "Balas *ya* untuk menyetujui atau *tidak* untuk membatalkan."
-        );
-        return;
-      }
-      if (session.step === "confirm") {
-        if (text.trim().toLowerCase() === "ya") {
-          const nrp = session.user_id;
-          await userModel.updateUserField(nrp, "whatsapp", senderWa);
-          const user = await userModel.findUserById(nrp);
-          await waClient.sendMessage(
-            chatId,
-            `✅ Nomor WhatsApp berhasil dihubungkan ke NRP *${nrp}*.\n` +
-              `${formatUserSummary(user)}`
-          );
-          delete waBindSessions[chatId];
-          return;
-        }
-        if (text.trim().toLowerCase() === "tidak") {
-          delete waBindSessions[chatId];
-          await waClient.sendMessage(chatId, "Baik, proses dibatalkan. Silakan masukkan NRP Anda untuk melanjutkan.");
-          waBindSessions[chatId] = { step: "ask_nrp" };
-          setBindTimeout(chatId);
-          return;
-        }
-        await waClient.sendMessage(chatId, "Balas *ya* untuk menyetujui, atau *tidak* untuk membatalkan.");
-        return;
-      }
-    } else {
-      waBindSessions[chatId] = { step: "ask_nrp" };
-      setBindTimeout(chatId);
-      await waClient.sendMessage(
-        chatId,
-        "🤖 Maaf, perintah yang Anda kirim belum dikenali. Silakan masukkan NRP Anda untuk melanjutkan proses binding akun atau balas *batal* untuk keluar:"
-      );
-      return;
-    }
+    await waClient.sendMessage(
+      chatId,
+      "🤖 Maaf, nomor WhatsApp Anda belum terdaftar dalam sistem. Silakan hubungi operator untuk registrasi."
+    );
+    return;
   }
 
   // Untuk user lama (pesan tidak dikenal)
-  const helpInstruction = allowUserMenu
-    ? "Untuk melihat daftar perintah dan bantuan penggunaan, silakan ketik *userrequest*."
-    : "Untuk melihat daftar perintah dan bantuan penggunaan, silakan hubungi nomor *WA-USER* dan ketik *userrequest*.";
+  const helpInstruction = "Untuk melihat daftar perintah dan bantuan penggunaan, silakan hubungi operator.";
   await waClient.sendMessage(
     chatId,
     "🤖 Maaf, perintah yang Anda kirim belum dikenali oleh sistem.\n\n" +
@@ -3701,30 +3411,12 @@ Ketik *angka menu* di atas, atau *batal* untuk keluar.
     try {
       await processMessage();
     } finally {
-      if (allowUserMenu) {
-        const reminder = await computeMutualReminder();
-        const hasSessionNow = hasAnySession();
-        if (
-          reminder.shouldRemind &&
-          reminder.message &&
-          hadSessionAtStart &&
-          !hasSessionNow
-        ) {
-          try {
-            await waClient.sendMessage(chatId, reminder.message);
-          } catch (err) {
-            console.warn(
-              `${clientLabel} failed to send mutual reminder to ${chatId}: ${err?.message || err}`
-            );
-          }
-        }
-      }
+      // Mutual reminder no longer needed
     }
   };
 }
 
 const handleMessage = createHandleMessage(waClient, {
-  allowUserMenu: false,
   clientLabel: "[WA]",
 });
 
@@ -3977,7 +3669,6 @@ export async function handleGatewayMessage(msg) {
 
   const handledComplaint = await handleComplaintMessageIfApplicable({
     text,
-    allowUserMenu: false,
     session,
     isAdmin,
     initialIsMyContact,
