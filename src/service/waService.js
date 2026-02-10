@@ -1476,7 +1476,7 @@ async function handleClientRequestSessionStep({
 }
 
 export function createHandleMessage(waClient, options = {}) {
-  const { allowUserMenu = true, clientLabel = "[WA]", markSeen = true } = options;
+  const { clientLabel = "[WA]", markSeen = true } = options;
 
   return async function handleMessage(msg) {
     const chatId = msg.from;
@@ -1563,13 +1563,9 @@ export function createHandleMessage(waClient, options = {}) {
 
     const hasAnySession = () =>
       Boolean(getSession(chatId)) ||
-      Boolean(userMenuContext[chatId]) ||
-      Boolean(waBindSessions[chatId]) ||
-      Boolean(updateUsernameSession[chatId]) ||
-      Boolean(userRequestLinkSessions[chatId]) ||
       Boolean(operatorOptionSessions[chatId]) ||
       Boolean(adminOptionSessions[chatId]);
-    const hadSessionAtStart = allowUserMenu ? hasAnySession() : false;
+    const hadSessionAtStart = hasAnySession();
     let mutualReminderComputed = false;
     let mutualReminderResult = {
       shouldRemind: false,
@@ -1605,89 +1601,6 @@ export function createHandleMessage(waClient, options = {}) {
     };
 
     const computeMutualReminder = async () => {
-      if (!allowUserMenu) {
-        mutualReminderComputed = true;
-        return mutualReminderResult;
-      }
-      if (mutualReminderComputed) {
-        return mutualReminderResult;
-      }
-
-      const result = {
-        shouldRemind: false,
-        message: null,
-        savedInDb: false,
-        savedInWhatsapp: false,
-        user: null,
-      };
-
-      let savedInDb = false;
-      if (userWaNum) {
-        try {
-          const lookup = await query(
-            "SELECT 1 FROM saved_contact WHERE phone_number = $1 LIMIT 1",
-            [userWaNum]
-          );
-          savedInDb = lookup.rowCount > 0;
-        } catch (err) {
-          console.error(
-            `${clientLabel} failed to check saved_contact for ${chatId}: ${err.message}`
-          );
-        }
-      }
-
-      const user = await getUserByWa();
-      result.user = user || null;
-
-      if (user && !savedInDb) {
-        try {
-          await saveContactIfNew(chatId);
-          savedInDb = true;
-        } catch (err) {
-          console.error(
-            `${clientLabel} failed to persist contact for ${chatId}: ${err.message}`
-          );
-        }
-      }
-
-      let savedInWhatsapp =
-        typeof initialIsMyContact === "boolean" ? initialIsMyContact : null;
-
-      const refreshContactState = async () => {
-        if (typeof waClient.getContact !== "function") {
-          return savedInWhatsapp;
-        }
-        try {
-          const contact = await waClient.getContact(chatId);
-          return contact?.isMyContact ?? savedInWhatsapp;
-        } catch (err) {
-          console.warn(
-            `${clientLabel} failed to refresh contact info for ${chatId}: ${err?.message || err}`
-          );
-          return savedInWhatsapp;
-        }
-      };
-
-      if (savedInWhatsapp === null) {
-        savedInWhatsapp = await refreshContactState();
-      }
-
-      if (user && savedInDb && savedInWhatsapp !== true) {
-        savedInWhatsapp = await refreshContactState();
-      }
-
-      const isMutual = Boolean(savedInWhatsapp) && savedInDb;
-
-      if (!isMutual) {
-        result.shouldRemind = true;
-        result.message =
-          "📌 Mohon simpan nomor ini sebagai *WA Center CICERO* agar pemberitahuan dan layanan dapat diterima tanpa hambatan.";
-      }
-
-      result.savedInDb = savedInDb;
-      result.savedInWhatsapp = Boolean(savedInWhatsapp);
-
-      mutualReminderResult = result;
       mutualReminderComputed = true;
       return mutualReminderResult;
     };
@@ -1698,60 +1611,6 @@ export function createHandleMessage(waClient, options = {}) {
       const isAdminCommand = adminCommands.some((cmd) =>
         lowerText.startsWith(cmd)
       );
-      const clearUserRequestLinkSession = (id = chatId) => {
-        const sessionRef = userRequestLinkSessions[id];
-        if (sessionRef?.timeout) {
-          clearTimeout(sessionRef.timeout);
-        }
-        delete userRequestLinkSessions[id];
-      };
-
-      const startUserMenuSession = async () => {
-        if (!allowUserMenu) {
-          return false;
-        }
-        if (!userMenuContext[chatId]) {
-          userMenuContext[chatId] = {};
-      }
-      try {
-        await userMenuHandlers.main(
-          userMenuContext[chatId],
-          chatId,
-          "",
-          waClient,
-          pool,
-          userModel
-        );
-        const expectReply = shouldExpectQuickReply(userMenuContext[chatId]);
-        setMenuTimeout(chatId, waClient, expectReply);
-        return true;
-      } catch (err) {
-        console.error(`${clientLabel} user menu start error: ${err.message}`);
-        await safeSendMessage(
-          waClient,
-          chatId,
-          "❌ Gagal memulai menu pengguna. Silakan coba lagi nanti."
-        );
-        return true;
-      }
-    };
-
-      const handleProfileLinkForUserRequest = async () => {
-        if (!allowUserMenu) return false;
-        const extracted = extractProfileUsername(text);
-        if (!extracted) return false;
-
-        if (userByWaError) {
-        await waClient.sendMessage(
-          chatId,
-          "❌ Sistem gagal memeriksa data WhatsApp Anda. Silakan coba kembali nanti."
-        );
-        return true;
-      }
-
-      const user = await getUserByWa();
-      if (!user) {
-        const started = await startUserMenuSession();
         if (!started) {
           await waClient.sendMessage(
             chatId,
@@ -1831,63 +1690,6 @@ export function createHandleMessage(waClient, options = {}) {
         return true;
       }
 
-      const linkActive = linkVerification.active;
-      const storedActive = storedVerification?.active || false;
-      const lines = [
-        `Perbandingan akun ${getPlatformLabel(extracted.platform)}:`,
-        formatVerificationSummary(
-          "Data sistem",
-          extracted.platform,
-          storedDisplay,
-          storedVerification
-        ),
-        formatVerificationSummary(
-          "Link Anda",
-          extracted.platform,
-          extracted.display,
-          linkVerification
-        ),
-      ];
-
-      if (storedActive && linkActive && storedNormalized) {
-        lines.push(
-          "",
-          `Keduanya aktif. Balas *1* untuk mempertahankan ${storedDisplay} atau *2* untuk mengganti ke ${extracted.display}.`,
-          "Balas *batal* untuk membatalkan pilihan."
-        );
-        userRequestLinkSessions[chatId] = {
-          platform: extracted.platform,
-          field,
-          userId: user.user_id,
-          newValue: extracted.storeValue,
-          newDisplay: extracted.display,
-          previousDisplay: storedDisplay,
-        };
-        setUserRequestLinkTimeout(chatId);
-        await waClient.sendMessage(chatId, lines.join("\n"));
-        return true;
-      }
-
-      if (storedActive || linkActive) {
-        lines.push(
-          "",
-          storedActive
-            ? `✅ Akun ${getPlatformLabel(extracted.platform)} ${storedDisplay} di database adalah akun aktif dan terbaca sistem.`
-            : `✅ Akun ${getPlatformLabel(extracted.platform)} ${extracted.display} dari link Anda aktif dan terbaca sistem.`
-        );
-        await waClient.sendMessage(chatId, lines.join("\n"));
-        return true;
-      }
-
-      lines.push(
-        "",
-        `⚠️ Belum ada akun ${getPlatformLabel(
-          extracted.platform
-        )} yang terbaca aktif. Pastikan akun tidak private dan memiliki konten.`
-      );
-      await waClient.sendMessage(chatId, lines.join("\n"));
-      return true;
-    };
 
     if (
       trimmedText &&
@@ -1930,67 +1732,7 @@ export function createHandleMessage(waClient, options = {}) {
       return;
     }
 
-    if (allowUserMenu && userRequestLinkSessions[chatId]) {
-      const selection = userRequestLinkSessions[chatId];
-      if (lowerText === "batal") {
-        await waClient.sendMessage(
-          chatId,
-          "Perubahan dibatalkan. Username tetap menggunakan data sebelumnya."
-        );
-        clearUserRequestLinkSession();
-        return;
-      }
-      if (lowerText === "1") {
-        await waClient.sendMessage(
-          chatId,
-          selection.previousDisplay
-            ? `Data username tetap menggunakan ${selection.previousDisplay}.`
-            : "Belum ada perubahan username yang disimpan."
-        );
-        clearUserRequestLinkSession();
-        return;
-      }
-      if (lowerText === "2") {
-        try {
-          await userModel.updateUserField(
-            selection.userId,
-            selection.field,
-            selection.newValue
-          );
-          await waClient.sendMessage(
-            chatId,
-            `✅ Username ${getPlatformLabel(selection.platform)} berhasil diupdate menjadi ${selection.newDisplay}.`
-          );
-        } catch (err) {
-          await waClient.sendMessage(
-            chatId,
-            `❌ Gagal menyimpan perubahan username: ${err.message}`
-          );
-        }
-        clearUserRequestLinkSession();
-        return;
-      }
-      await waClient.sendMessage(
-        chatId,
-        "Balas *1* untuk mempertahankan data lama, *2* untuk mengganti ke username baru, atau *batal* untuk membatalkan."
-      );
-      setUserRequestLinkTimeout(chatId);
-      return;
-    }
-
-    // =========== Menu User Interaktif ===========
-    if (userMenuContext[chatId] && lowerText === "batal") {
-      const session = userMenuContext[chatId];
-      // Clear all timeouts
-      if (session.timeout) clearTimeout(session.timeout);
-      if (session.warningTimeout) clearTimeout(session.warningTimeout);
-      if (session.noReplyTimeout) clearTimeout(session.noReplyTimeout);
-      delete userMenuContext[chatId];
-      if (allowUserMenu) {
-        await waClient.sendMessage(chatId, "✅ Menu User ditutup. Terima kasih.");
-      }
-      return;
-    }
+    // =========== Handle "batal" Command ===========
     if (session && lowerText === "batal") {
       const menuLabels = {
         oprrequest: "Menu Operator",
@@ -2027,37 +1769,10 @@ export function createHandleMessage(waClient, options = {}) {
       }
       if (/^2$/.test(text.trim())) {
         delete operatorOptionSessions[chatId];
-        if (!allowUserMenu) {
-          return;
-        }
-        const pengirim = chatId.replace(/[^0-9]/g, "");
-        const userByWA = await userModel.findUserByWhatsApp(pengirim);
-        const salam = getGreeting();
-        if (userByWA) {
-          userMenuContext[chatId] = {
-            step: "confirmUserByWaUpdate",
-            user_id: userByWA.user_id,
-          };
-          const msg = `${salam}, Bapak/Ibu\n${formatUserSummary(userByWA)}\n\nApakah Anda ingin melakukan perubahan data?\nBalas *ya* untuk memulai update atau *tidak* untuk melewati.`;
-          await waClient.sendMessage(chatId, msg.trim());
-          setMenuTimeout(
-            chatId,
-            waClient,
-            shouldExpectQuickReply(userMenuContext[chatId])
-          );
-        } else {
-          userMenuContext[chatId] = { step: "inputUserId" };
-          const msg =
-            `${salam}! Nomor WhatsApp Anda belum terdaftar.` +
-            "\n\nBalas pesan ini dengan memasukan NRP Anda," +
-            "\n\n*Contoh Pesan Balasan : 87020990*";
-          await waClient.sendMessage(chatId, msg.trim());
-          setMenuTimeout(
-            chatId,
-            waClient,
-            shouldExpectQuickReply(userMenuContext[chatId])
-          );
-        }
+        await waClient.sendMessage(
+          chatId,
+          "❌ Menu perubahan data user tidak tersedia saat ini."
+        );
         return;
       }
       await waClient.sendMessage(
@@ -2093,37 +1808,10 @@ export function createHandleMessage(waClient, options = {}) {
       }
       if (/^3$/.test(text.trim())) {
         delete adminOptionSessions[chatId];
-        if (!allowUserMenu) {
-          return;
-        }
-        const pengirim = chatId.replace(/[^0-9]/g, "");
-        const userByWA = await userModel.findUserByWhatsApp(pengirim);
-        const salam = getGreeting();
-        if (userByWA) {
-          userMenuContext[chatId] = {
-            step: "confirmUserByWaUpdate",
-            user_id: userByWA.user_id,
-          };
-          const msg = `${salam}, Bapak/Ibu\n${formatUserSummary(userByWA)}\n\nApakah Anda ingin melakukan perubahan data?\nBalas *ya* untuk memulai update atau *tidak* untuk melewati.`;
-          await waClient.sendMessage(chatId, msg.trim());
-          setMenuTimeout(
-            chatId,
-            waClient,
-            shouldExpectQuickReply(userMenuContext[chatId])
-          );
-        } else {
-          userMenuContext[chatId] = { step: "inputUserId" };
-          const msg =
-            `${salam}! Nomor WhatsApp Anda belum terdaftar.` +
-            "\n\nBalas pesan ini dengan memasukan NRP Anda," +
-            "\n\n*Contoh Pesan Balasan : 87020990*";
-          await waClient.sendMessage(chatId, msg.trim());
-          setMenuTimeout(
-            chatId,
-            waClient,
-            shouldExpectQuickReply(userMenuContext[chatId])
-          );
-        }
+        await waClient.sendMessage(
+          chatId,
+          "❌ Menu perubahan data user tidak tersedia saat ini."
+        );
         return;
       }
       await waClient.sendMessage(
