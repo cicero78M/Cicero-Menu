@@ -1617,7 +1617,7 @@ export function createHandleMessage(waClient, options = {}) {
           );
         }
         return true;
-      }
+    };
 
       const field = extracted.platform === "instagram" ? "insta" : "tiktok";
       const storedRaw = user[field];
@@ -3406,7 +3406,6 @@ Ketik *angka menu* di atas, atau *batal* untuk keluar.
   );
   console.log(`${clientLabel} Message from ${chatId} processed with fallback handler`);
   return;
-    };
 
     try {
       await processMessage();
